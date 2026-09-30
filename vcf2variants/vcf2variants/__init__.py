@@ -1,7 +1,13 @@
 import argparse
+import shutil
+import tempfile
+import os.path
+import heapq
+import typing
 from os.path import commonprefix
+from typing import Iterable, Iterator
 
-from natsort import natsorted
+from natsort import natsorted, natsort_key
 
 from vcfphasesets import read_vcf
 
@@ -50,6 +56,28 @@ def trim(start, end, ref, alt):
     return trim_start, trim_end, inserted
 
 
+class VardaEntry(typing.NamedTuple):
+    chrom: str
+    start: int
+    end: int
+    ploidy: int
+    ps_id: int
+    length: int
+    sequence: str
+
+    def to_line(self) -> str:
+        return (f"{self.chrom}\t{self.start}\t{self.end}\t{self.ploidy}\t"
+                f"{self.ps_id}\t{self.length}\t{self.sequence}\n")
+
+    @classmethod
+    def from_line(cls, line: str):
+        chrom, start, end, ploidy, ps_id, length, sequence = line.strip().split("\t")
+        return cls(
+            chrom, int(start), int(end), int(ploidy), int(ps_id), int(length),
+            sequence
+        )
+
+
 def to_varda(phase_sets):
     ps_ids = {}
     for (chrom, ps), alleles in phase_sets.items():
@@ -61,13 +89,13 @@ def to_varda(phase_sets):
         unique_variants = set.union(*(set(allele) for allele in heterozygotes))
 
         for start, end, sequence in homozygotes:
-            yield chrom, start, end, len(alleles), -1, len(sequence), sequence or "."
+            yield VardaEntry(chrom, start, end, len(alleles), -1, len(sequence), sequence or ".")
 
         if len(unique_variants) == 1:
             # We are now a heterozygous unphased variant
             start, end, sequence = unique_variants.pop()
             ploidy = sum(len(allele) for allele in heterozygotes)
-            yield chrom, start, end, ploidy, ps_ids[chrom][(0, 0)], len(sequence), sequence or "."
+            yield VardaEntry(chrom, start, end, ploidy, ps_ids[chrom][(0, 0)], len(sequence), sequence or ".")
         else:
             for idx, allele in enumerate(heterozygotes):
                 for variant in allele:
@@ -75,7 +103,48 @@ def to_varda(phase_sets):
                         ps_ids[chrom][(ps, idx)] = len(ps_ids[chrom])
 
                     start, end, sequence = variant
-                    yield chrom, start, end, 1, ps_ids[chrom][(ps, idx)], len(sequence), sequence or "."
+                    yield VardaEntry(chrom, start, end, 1, ps_ids[chrom][(ps, idx)], len(sequence), sequence or ".")
+
+
+def _tmp_file_to_varda_entry(tmp_file: str) -> Iterator[VardaEntry]:
+    with open(tmp_file, "r") as tmp:
+        for line in tmp:
+            yield VardaEntry.from_line(line)
+
+
+def batched_natural_sorting(
+        varda_entries: Iterable[VardaEntry],
+        max_batch_size: int = 500_000,  # Roughly 1 GiB of memory usage.
+        work_folder: str = os.path.curdir
+) -> Iterator[VardaEntry]:
+    batches_folder = tempfile.mkdtemp(dir=work_folder)
+    os.makedirs(batches_folder, exist_ok=True)
+    filenames = []
+    try:
+        while True:
+            batch: list[VardaEntry] = []
+            for _, entry in zip(range(max_batch_size), varda_entries):
+                batch.append(entry)
+            sorted_batch = natsorted(batch)
+            del batch  # Immediately cleanup memory here.
+            if len(sorted_batch) < max_batch_size:
+                # Keep the last batch in memory rather than writing to disk
+                break
+            # Write sorted batch to disk.
+            with tempfile.NamedTemporaryFile(dir=batches_folder, delete=False, mode="wt") as tmp:
+                filenames.append(tmp.name)
+                for entry in sorted_batch:
+                    tmp.write(entry.to_line())
+            del sorted_batch
+        if len(filenames) == 0:
+            yield from sorted_batch
+            return
+
+        iterators = [_tmp_file_to_varda_entry(filename) for filename in filenames]
+        iterators.append(iter(sorted_batch))
+        yield from heapq.merge(*iterators, key=natsort_key)
+    finally:
+        shutil.rmtree(batches_folder)
 
 
 def main():
@@ -84,7 +153,7 @@ def main():
     args = parser.parse_args()
 
     _, phase_sets = read_vcf(args.filename, mod_func=trim)
-    for entry in natsorted(to_varda(phase_sets)):
+    for entry in batched_natural_sorting(to_varda(phase_sets)):
         print(*entry, sep="\t")
 
 
