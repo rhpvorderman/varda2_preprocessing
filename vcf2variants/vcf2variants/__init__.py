@@ -88,7 +88,7 @@ def read_vcf(filename):
                     variant = trim(rec.start, rec.stop, rec.ref, alt)
                     phase_sets[key][idx].append(variant)
 
-        return vcf_file.header.samples[0], {key: value for key, value in phase_sets.items() if any(value)}
+        return {key: value for key, value in phase_sets.items() if any(value)}
 
 
 class VardaEntry(typing.NamedTuple):
@@ -187,7 +187,7 @@ def main():
     parser.add_argument("filename", help="VCF file")
     args = parser.parse_args()
 
-    _, phase_sets = read_vcf(args.filename)
+    phase_sets = read_vcf(args.filename)
     for entry in batched_natural_sorting(to_varda(phase_sets)):
         print(*entry, sep="\t")
 
