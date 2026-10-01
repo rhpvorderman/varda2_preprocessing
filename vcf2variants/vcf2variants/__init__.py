@@ -55,7 +55,7 @@ def trim(start, end, ref, alt):
     return trim_start, trim_end, inserted
 
 
-def read_vcf(filename, mod_func=None):
+def read_vcf(filename):
     with VariantFile(filename) as vcf_file:
         # Assume single sample VCF files for now (and forever)
         assert len(vcf_file.header.samples) == 1
@@ -85,10 +85,7 @@ def read_vcf(filename, mod_func=None):
                     if alt == "*":
                         continue
 
-                    if callable(mod_func):
-                        variant = mod_func(rec.start, rec.stop, rec.ref, alt)
-                    else:
-                        variant = rec.start, rec.stop, alt
+                    variant = trim(rec.start, rec.stop, rec.ref, alt)
                     phase_sets[key][idx].append(variant)
 
         return vcf_file.header.samples[0], {key: value for key, value in phase_sets.items() if any(value)}
@@ -190,7 +187,7 @@ def main():
     parser.add_argument("filename", help="VCF file")
     args = parser.parse_args()
 
-    _, phase_sets = read_vcf(args.filename, mod_func=trim)
+    _, phase_sets = read_vcf(args.filename)
     for entry in batched_natural_sorting(to_varda(phase_sets)):
         print(*entry, sep="\t")
 
