@@ -59,12 +59,14 @@ def read_vcf(filename):
     with VariantFile(filename) as vcf_file:
         # Assume single sample VCF files for now (and forever)
         assert len(vcf_file.header.samples) == 1
-
         phase_sets = {}
         active_ps_id = 0
+        ps_ids = {}
         for rec in vcf_file.fetch():
             entry = rec.samples[0]
-
+            chrom = rec.chrom
+            if chrom not in ps_ids:
+                ps_ids[chrom] = {(0, 0): 0}
             ps_id = entry.get("PS")
             if entry.phased:
                 ps_id = ps_id or active_ps_id
@@ -72,21 +74,20 @@ def read_vcf(filename):
                 ps_id = rec.pos
                 active_ps_id = ps_id if entry.phased else 0
 
-            key = rec.chrom, ps_id
-            if key not in phase_sets:
-                phase_sets[key] = [[] for _ in entry["GT"]]
+            genotypes = entry["GT"]
+            alleles  = []
+            for gt in genotypes:
+                if not gt:
+                    continue
+                alt = rec.alts[gt - 1]
+                if "<" in alt or ">" in alt:
+                    raise ValueError("Cannot deal with symbolic alleles")
+                if alt == "*":
+                    continue
+                alleles.append(trim(rec.start, rec.stop, rec.ref, alt))
 
-            for idx, gt in enumerate(entry["GT"]):
-                if gt:
-                    alt = rec.alts[gt - 1]
-                    if "<" in alt or ">" in alt:
-                        raise ValueError("Cannot deal with symbolic alleles")
 
-                    if alt == "*":
-                        continue
-
-                    variant = trim(rec.start, rec.stop, rec.ref, alt)
-                    phase_sets[key][idx].append(variant)
+            pass
 
         return {key: value for key, value in phase_sets.items() if any(value)}
 
