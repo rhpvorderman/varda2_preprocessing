@@ -1,8 +1,6 @@
 import argparse
 from os.path import commonprefix
 
-from natsort import natsorted
-
 from pysam import VariantFile
 
 
@@ -125,7 +123,7 @@ def main():
 
     phase_set_dicts = read_vcf(args.filename)
     for phase_sets in phase_set_dicts:
-        for entry in natsorted(to_varda(phase_sets)):
+        for entry in sorted(to_varda(phase_sets)):
             print(*entry, sep="\t")
 
 
