@@ -57,9 +57,13 @@ def read_vcf(filename):
 
         phase_sets = {}
         active_ps_id = 0
+        ref_id = -1
         for rec in vcf_file.fetch():
             entry = rec.samples[0]
-
+            if rec.rid != ref_id:
+                yield {key: value for key, value in phase_sets.items() if any(value)}
+                phase_sets = {}
+                ref_id = rec.rid
             ps_id = entry.get("PS")
             if entry.phased:
                 ps_id = ps_id or active_ps_id
@@ -83,7 +87,7 @@ def read_vcf(filename):
                     variant = trim(rec.start, rec.stop, rec.ref, alt)
                     phase_sets[key][idx].append(variant)
 
-        return {key: value for key, value in phase_sets.items() if any(value)}
+        yield {key: value for key, value in phase_sets.items() if any(value)}
 
 
 def to_varda(phase_sets):
@@ -119,9 +123,10 @@ def main():
     parser.add_argument("filename", help="VCF file")
     args = parser.parse_args()
 
-    phase_sets = read_vcf(args.filename)
-    for entry in natsorted(to_varda(phase_sets)):
-        print(*entry, sep="\t")
+    phase_set_dicts = read_vcf(args.filename)
+    for phase_sets in phase_set_dicts:
+        for entry in natsorted(to_varda(phase_sets)):
+            print(*entry, sep="\t")
 
 
 if __name__ == "__main__":
